@@ -355,16 +355,21 @@ NB_MODULE(_re2, module) {
       .def("Match", &RE2MatchShim)
       .def_static("QuoteMeta", &RE2QuoteMetaShim);
 
+  // Without the GIL, nothing else serializes calls that modify a Set or a
+  // Filter, so lock the object for those calls. (nb::lock_self() is a no-op
+  // when the GIL is enabled.) Match() must not be called concurrently with
+  // Add() or Compile() on the same object, with or without the GIL.
   set.def(nb::init<RE2::Anchor, const RE2::Options&>())
-      .def("Add", &Set::Add)
-      .def("Compile", &Set::Compile)
+      .def("Add", &Set::Add, nb::lock_self())
+      .def("Compile", &Set::Compile, nb::lock_self())
       .def("Match", &Set::Match);
 
   filter.def(nb::init<>())
-      .def("Add", &Filter::Add)
-      .def("Compile", &Filter::Compile)
+      .def("Add", &Filter::Add, nb::lock_self())
+      .def("Compile", &Filter::Compile, nb::lock_self())
       .def("Match", &Filter::Match)
-      .def("GetRE2", &Filter::GetRE2, nb::rv_policy::reference_internal);
+      .def("GetRE2", &Filter::GetRE2, nb::rv_policy::reference_internal,
+           nb::lock_self());
 }
 
 }  // namespace re2_python
