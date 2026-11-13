@@ -14,6 +14,7 @@
 
 #include "absl/strings/string_view.h"
 #include "pybind11/buffer_info.h"
+#include "pybind11/critical_section.h"
 #include "pybind11/gil.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
@@ -253,6 +254,25 @@ class Filter {
   std::unique_ptr<RE2::Set> set_;
 };
 
+// Without the GIL, nothing else serializes calls that modify a Set or a
+// Filter, so these wrappers hold a critical section on the Python object for
+// the duration of the call. (That does nothing when the GIL is enabled.)
+template <typename T, typename R, typename... Args>
+auto Locked(R (T::*method)(Args...)) {
+  return [method](py::object self, Args... args) -> R {
+    py::scoped_critical_section guard(self);
+    return (self.cast<T&>().*method)(std::forward<Args>(args)...);
+  };
+}
+
+template <typename T, typename R, typename... Args>
+auto Locked(R (T::*method)(Args...) const) {
+  return [method](py::object self, Args... args) -> R {
+    py::scoped_critical_section guard(self);
+    return (self.cast<const T&>().*method)(std::forward<Args>(args)...);
+  };
+}
+
 PYBIND11_MODULE(_re2, module, py::mod_gil_not_used()) {
   // Translate exceptions thrown by py::pybind11_fail() into Python.
   py::register_local_exception<std::runtime_error>(module, "Error");
@@ -336,16 +356,18 @@ PYBIND11_MODULE(_re2, module, py::mod_gil_not_used()) {
       .def("Match", &RE2MatchShim)
       .def_static("QuoteMeta", &RE2QuoteMetaShim);
 
+  // Match() must not be called concurrently with Add() or Compile() on the
+  // same object, with or without the GIL.
   set.def(py::init<RE2::Anchor, const RE2::Options&>())
-      .def("Add", &Set::Add)
-      .def("Compile", &Set::Compile)
+      .def("Add", Locked(&Set::Add))
+      .def("Compile", Locked(&Set::Compile))
       .def("Match", &Set::Match);
 
   filter.def(py::init<>())
-      .def("Add", &Filter::Add)
-      .def("Compile", &Filter::Compile)
+      .def("Add", Locked(&Filter::Add))
+      .def("Compile", Locked(&Filter::Compile))
       .def("Match", &Filter::Match)
-      .def("GetRE2", &Filter::GetRE2,
+      .def("GetRE2", Locked(&Filter::GetRE2),
            py::return_value_policy::reference_internal);
 }
 
