@@ -7,6 +7,7 @@ import re
 import setuptools
 import setuptools.command.build_ext
 import shutil
+import sysconfig
 
 long_description = r"""A drop-in replacement for the re module.
 
@@ -65,6 +66,10 @@ class BuildExt(setuptools.command.build_ext.build_ext):
       cmd.append(f'--macos_minimum_os={ver}')
     except KeyError:
       pass
+    if free_threaded():
+      # Makes nanobind_bazel define NB_FREE_THREADED, so that the extension
+      # declares that it can run without the GIL.
+      cmd.append('--@rules_python//python/config_settings:py_freethreaded=yes')
     tag = py_limited_api()
     if tag:
       cmd.append(f'--@nanobind_bazel//:py-limited-api={tag}')
@@ -86,6 +91,11 @@ class BuildExt(setuptools.command.build_ext.build_ext):
 # a cp312-abi3 wheel.
 def py_limited_api():
   return os.environ.get('PY_LIMITED_API')
+
+
+# Whether we are building for a free-threaded interpreter (e.g. 3.15t).
+def free_threaded():
+  return bool(sysconfig.get_config_var('Py_GIL_DISABLED'))
 
 
 def options():
@@ -121,15 +131,19 @@ def sources():
 
 
 def define_macros():
+  macros = []
+  if free_threaded():
+    macros.append(('NB_FREE_THREADED', None))
   tag = py_limited_api()
   if not tag:
-    return []
+    return macros
   match = re.fullmatch(r'cp3(\d+)', tag)
   if not match:
     raise ValueError(f'unsupported PY_LIMITED_API value: {tag!r}')
   minor = int(match.group(1))
   # e.g. `cp312` -> 0x030C0000, the Py_LIMITED_API value for Python 3.12.
-  return [('Py_LIMITED_API', '0x03%02X0000' % minor)]
+  macros.append(('Py_LIMITED_API', '0x03%02X0000' % minor))
+  return macros
 
 
 ext_module = setuptools.Extension(

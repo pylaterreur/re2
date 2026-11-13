@@ -86,7 +86,7 @@ config_setting(
 cc_import(
     name = "interface_library",
     interface_library = select({{
-        ":windows_unstable_abi": "libs/python{major}{minor}.lib",
+        ":windows_unstable_abi": "libs/python{major}{minor}{t}.lib",
         "@platforms//os:windows": "libs/python3.lib",
         "//conditions:default": None,
     }}),
@@ -101,6 +101,9 @@ cc_library(
             interpreter_path=sys.executable.replace('\\', '/'),
             major=sys.version_info.major,
             minor=sys.version_info.minor,
+            # Free-threaded builds name their import libraries e.g.
+            # python315t.lib.
+            t='t' if sysconfig.get_config_var('Py_GIL_DISABLED') else '',
         )
     )
 
